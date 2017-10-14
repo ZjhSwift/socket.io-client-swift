@@ -59,6 +59,12 @@ public protocol SocketManagerSpec : class, SocketEngineClient {
     ///
     /// This will cause a `disconnect` event to be emitted, as well as an `reconnectAttempt` event.
     func reconnect()
+
+    /// Returns a `SocketIOClient` for the given namespace. This socket shares a transport with the manager.
+    ///
+    /// - parameter forNamespace: The namespace for the socket.
+    /// - returns: A `SocketIOClient` for the given namespace.
+    func socket(forNamespace nsp: String) -> SocketIOClient
 }
 
 open class SocketManager : NSObject, SocketManagerSpec, SocketParsable, SocketDataBufferable {
@@ -108,7 +114,7 @@ open class SocketManager : NSObject, SocketManagerSpec, SocketParsable, SocketDa
     public var handleQueue = DispatchQueue.main
 
     /// The sockets in this manager indexed by namespace.
-    public var nsps = [String: SocketIOClientSpec]()
+    public var nsps = [String: SocketIOClient]()
 
     /// If `true`, this client will try and reconnect on any disconnects.
     public var reconnects = true
@@ -148,6 +154,9 @@ open class SocketManager : NSObject, SocketManagerSpec, SocketParsable, SocketDa
         self._config.insert(.path("/socket.io/"), replacing: false)
 
         super.init()
+
+        setConfigs()
+        nsps["/"] = SocketIOClient(manager: self, nsp: "/", config: config)
     }
 
     /// Not so type safe way to create a SocketIOClient, meant for Objective-C compatiblity.
@@ -180,8 +189,15 @@ open class SocketManager : NSObject, SocketManagerSpec, SocketParsable, SocketDa
 
     /// Connects the underlying transport.
     open func connect() {
-        // TODO connect
-        // TODO handle force new
+        guard status == .notConnected || status == .disconnected else {
+            // TODO logging
+            return
+        }
+
+        // TODO forceNew
+        addEngine()
+
+        engine?.connect()
     }
 
     /// Called when the manager has disconnected from socket.io.
@@ -258,15 +274,11 @@ open class SocketManager : NSObject, SocketManagerSpec, SocketParsable, SocketDa
     private func _engineDidOpen(reason: String) {
         DefaultSocketLogger.Logger.log("Engine opened \(reason)", type: SocketManager.logType)
 
-//        guard nsp != "/" else {
-//            didConnect(toNamespace: "/")
-//
-//            return
-//        }
-//
-//        joinNamespace(nsp)
+        nsps["/"]?.didConnect(toNamespace: "/")
 
-        // TODO Handle open
+        for (nsp, socket) in nsps where nsp != "/" {
+            socket.joinNamespace()
+        }
     }
 
     /// Called when the engine receives a pong message.
@@ -297,12 +309,17 @@ open class SocketManager : NSObject, SocketManagerSpec, SocketParsable, SocketDa
     /// - parameter msg: The message that needs parsing.
     open func parseEngineMessage(_ msg: String) {
         handleQueue.async {
-            self.parseEngineMessage(msg)
+            self._parseEngineMessage(msg)
         }
     }
 
     private func _parseEngineMessage(_ msg: String) {
         guard let packet = parseSocketMessage(msg) else { return }
+        guard packet.type != .binaryAck && packet.type != .binaryEvent else {
+            waitingPackets.append(packet)
+
+            return
+        }
 
         nsps[packet.nsp]?.handlePacket(packet)
     }
@@ -371,6 +388,24 @@ open class SocketManager : NSObject, SocketManagerSpec, SocketParsable, SocketDa
                 continue
             }
         }
+    }
+
+    /// Returns a `SocketIOClient` for the given namespace. This socket shares a transport with the manager.
+    ///
+    /// - parameter forNamespace: The namespace for the socket.
+    /// - returns: A `SocketIOClient` for the given namespace.
+    open func socket(forNamespace nsp: String) -> SocketIOClient {
+        assert(nsp.hasPrefix("/"), "forNamespace must have a leading /")
+
+        if let socket = nsps[nsp] {
+            return socket
+        }
+
+        let client = SocketIOClient(manager: self, nsp: nsp, config: config)
+
+        nsps[nsp] = client
+
+        return client
     }
 }
 
