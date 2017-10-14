@@ -55,6 +55,9 @@ public protocol SocketManagerSpec : class, SocketEngineClient {
     /// - parameter reason: The reason for the disconnection.
     func didDisconnect(reason: String)
 
+    /// Disconnects the manager and all associated sockets.
+    func disconnect()
+
     /// Tries to reconnect to the server.
     ///
     /// This will cause a `disconnect` event to be emitted, as well as an `reconnectAttempt` event.
@@ -204,21 +207,34 @@ open class SocketManager : NSObject, SocketManagerSpec, SocketParsable, SocketDa
     ///
     /// - parameter reason: The reason for the disconnection.
     open func didDisconnect(reason: String) {
-        // TODO emit disconnect to everyone
+        forAll {socket in
+            socket.didDisconnect(reason: reason)
+        }
+    }
+
+    /// Disconnects the manager and all associated sockets.
+    open func disconnect() {
+        DefaultSocketLogger.Logger.log("Manager closing", type: SocketManager.logType)
+
+        status = .disconnected
+
+        engine?.disconnect(reason: "Disconnect")
     }
 
     /// Sends a packet to all sockets in `nsps`
     ///
     /// - parameter packet: The packet to emit.
     open func emitAll(packet: SocketPacket) {
-
+        forAll {socket in
+            socket.handlePacket(packet)
+        }
     }
 
     /// Sends a client event to all sockets in `nsps`
     ///
     /// - parameter clientEvent: The event to emit.
     open func emitAll(clientEvent event: SocketClientEvent, data: [Any]) {
-        for (_, socket) in nsps {
+        forAll {socket in
             socket.handleClientEvent(event, data: data)
         }
     }
@@ -303,6 +319,11 @@ open class SocketManager : NSObject, SocketManagerSpec, SocketParsable, SocketDa
         emitAll(clientEvent: .ping, data: [])
     }
 
+    private func forAll(do: (SocketIOClient) -> ()) {
+        for (_, socket) in nsps {
+            `do`(socket)
+        }
+    }
 
     /// Called when the engine has a message that must be parsed.
     ///

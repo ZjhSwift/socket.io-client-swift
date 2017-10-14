@@ -33,8 +33,6 @@ import Foundation
 open class SocketIOClient : NSObject, SocketIOClientSpec {
     // MARK: Properties
 
-    private static let logType = "SocketIOClient"
-
     /// The namespace that this socket is currently connected to.
     ///
     /// **Must** start with a `/`.
@@ -51,8 +49,7 @@ open class SocketIOClient : NSObject, SocketIOClientSpec {
 
         set {
             guard status == .notConnected else {
-                DefaultSocketLogger.Logger.error("Tried setting config after calling connect",
-                                                 type: SocketIOClient.logType)
+                DefaultSocketLogger.Logger.error("Tried setting config after calling connect", type: logType)
                 return
             }
 
@@ -91,6 +88,7 @@ open class SocketIOClient : NSObject, SocketIOClientSpec {
     private(set) var currentAck = -1
 
     private var _config: SocketIOClientConfiguration
+    private lazy var logType = "SocketIOClient{\(nsp)}"
 
     // MARK: Initializers
 
@@ -118,7 +116,7 @@ open class SocketIOClient : NSObject, SocketIOClientSpec {
     }
 
     deinit {
-        DefaultSocketLogger.Logger.log("Client is being released", type: SocketIOClient.logType)
+        DefaultSocketLogger.Logger.log("Client is being released", type: logType)
     }
 
     // MARK: Methods
@@ -143,8 +141,7 @@ open class SocketIOClient : NSObject, SocketIOClientSpec {
         assert(timeoutAfter >= 0, "Invalid timeout: \(timeoutAfter)")
 
         guard let manager = self.manager, status != .connected else {
-            DefaultSocketLogger.Logger.log("Tried connecting on an already connected socket",
-                                           type: SocketIOClient.logType)
+            DefaultSocketLogger.Logger.log("Tried connecting on an already connected socket", type: logType)
             return
         }
 
@@ -158,8 +155,7 @@ open class SocketIOClient : NSObject, SocketIOClientSpec {
             guard let this = self, this.status == .connecting || this.status == .notConnected else { return }
 
             this.status = .disconnected
-            // TODO just leave the namespace
-            // this.engine?.disconnect(reason: "Connect timeout")
+            this.leaveNamespace()
 
             handler?()
         }
@@ -178,7 +174,7 @@ open class SocketIOClient : NSObject, SocketIOClientSpec {
     open func didConnect(toNamespace namespace: String) {
         guard status != .connected else { return }
 
-        DefaultSocketLogger.Logger.log("Socket connected", type: SocketIOClient.logType)
+        DefaultSocketLogger.Logger.log("Socket connected", type: logType)
 
         status = .connected
 
@@ -191,7 +187,7 @@ open class SocketIOClient : NSObject, SocketIOClientSpec {
     open func didDisconnect(reason: String) {
         guard status != .disconnected else { return }
 
-        DefaultSocketLogger.Logger.log("Disconnected: \(reason)", type: SocketIOClient.logType)
+        DefaultSocketLogger.Logger.log("Disconnected: \(reason)", type: logType)
 
         status = .disconnected
 
@@ -201,8 +197,9 @@ open class SocketIOClient : NSObject, SocketIOClientSpec {
     /// Disconnects the socket.
     @objc
     open func disconnect() {
-        DefaultSocketLogger.Logger.log("Closing socket", type: SocketIOClient.logType)
+        DefaultSocketLogger.Logger.log("Closing socket", type: logType)
 
+        leaveNamespace()
         didDisconnect(reason: "Disconnect")
     }
 
@@ -218,7 +215,7 @@ open class SocketIOClient : NSObject, SocketIOClientSpec {
             try emit(event, with: items.map({ try $0.socketRepresentation() }))
         } catch let err {
             DefaultSocketLogger.Logger.error("Error creating socketRepresentation for emit: \(event), \(items)",
-                                             type: SocketIOClient.logType)
+                                             type: logType)
 
             handleClientEvent(.error, data: [event, items, err])
         }
@@ -262,7 +259,7 @@ open class SocketIOClient : NSObject, SocketIOClientSpec {
             return emitWithAck(event, with: try items.map({ try $0.socketRepresentation() }))
         } catch let err {
             DefaultSocketLogger.Logger.error("Error creating socketRepresentation for emit: \(event), \(items)",
-                                             type: SocketIOClient.logType)
+                                             type: logType)
 
             handleClientEvent(.error, data: [event, items, err])
 
@@ -300,7 +297,7 @@ open class SocketIOClient : NSObject, SocketIOClientSpec {
         let packet = SocketPacket.packetFromEmit(data, id: ack ?? -1, nsp: nsp, ack: false)
         let str = packet.packetString
 
-        DefaultSocketLogger.Logger.log("Emitting: \(str)", type: SocketIOClient.logType)
+        DefaultSocketLogger.Logger.log("Emitting: \(str)", type: logType)
 
         manager?.engine?.send(str, withData: packet.binary)
     }
@@ -317,7 +314,7 @@ open class SocketIOClient : NSObject, SocketIOClientSpec {
         let packet = SocketPacket.packetFromEmit(items, id: ack, nsp: nsp, ack: true)
         let str = packet.packetString
 
-        DefaultSocketLogger.Logger.log("Emitting Ack: \(str)", type: SocketIOClient.logType)
+        DefaultSocketLogger.Logger.log("Emitting Ack: \(str)", type: logType)
 
         manager?.engine?.send(str, withData: packet.binary)
     }
@@ -330,7 +327,7 @@ open class SocketIOClient : NSObject, SocketIOClientSpec {
     open func handleAck(_ ack: Int, data: [Any]) {
         guard status == .connected, let manager = self.manager else { return }
 
-        DefaultSocketLogger.Logger.log("Handling ack: \(ack) with data: \(data)", type: SocketIOClient.logType)
+        DefaultSocketLogger.Logger.log("Handling ack: \(ack) with data: \(data)", type: logType)
 
         ackHandlers.executeAck(ack, with: data, onQueue: manager.handleQueue)
     }
@@ -353,7 +350,7 @@ open class SocketIOClient : NSObject, SocketIOClientSpec {
     open func handleEvent(_ event: String, data: [Any], isInternalMessage: Bool, withAck ack: Int = -1) {
         guard status == .connected || isInternalMessage else { return }
 
-        DefaultSocketLogger.Logger.log("Handling event: \(event) with data: \(data)", type: SocketIOClient.logType)
+        DefaultSocketLogger.Logger.log("Handling event: \(event) with data: \(data)", type: logType)
 
         anyHandler?(SocketAnyEvent(event: event, items: data))
 
@@ -400,7 +397,7 @@ open class SocketIOClient : NSObject, SocketIOClientSpec {
     open func joinNamespace() {
         guard nsp != "/" else { return }
 
-        DefaultSocketLogger.Logger.log("Joining namespace \(nsp)", type: SocketIOClient.logType)
+        DefaultSocketLogger.Logger.log("Joining namespace \(nsp)", type: logType)
 
         manager?.engine?.send("0\(nsp)", withData: [])
     }
@@ -421,7 +418,7 @@ open class SocketIOClient : NSObject, SocketIOClientSpec {
     /// - parameter event: The event to remove handlers for.
     @objc
     open func off(_ event: String) {
-        DefaultSocketLogger.Logger.log("Removing handler for event: \(event)", type: SocketIOClient.logType)
+        DefaultSocketLogger.Logger.log("Removing handler for event: \(event)", type: logType)
 
         handlers = handlers.filter({ $0.event != event })
     }
@@ -433,7 +430,7 @@ open class SocketIOClient : NSObject, SocketIOClientSpec {
     /// - parameter id: The UUID of the handler you wish to remove.
     @objc
     open func off(id: UUID) {
-        DefaultSocketLogger.Logger.log("Removing handler with id: \(id)", type: SocketIOClient.logType)
+        DefaultSocketLogger.Logger.log("Removing handler with id: \(id)", type: logType)
 
         handlers = handlers.filter({ $0.id != id })
     }
@@ -446,7 +443,7 @@ open class SocketIOClient : NSObject, SocketIOClientSpec {
     @objc
     @discardableResult
     open func on(_ event: String, callback: @escaping NormalCallback) -> UUID {
-        DefaultSocketLogger.Logger.log("Adding handler for event: \(event)", type: SocketIOClient.logType)
+        DefaultSocketLogger.Logger.log("Adding handler for event: \(event)", type: logType)
 
         let handler = SocketEventHandler(event: event, id: UUID(), callback: callback)
         handlers.append(handler)
@@ -490,7 +487,7 @@ open class SocketIOClient : NSObject, SocketIOClientSpec {
     @objc
     @discardableResult
     open func once(_ event: String, callback: @escaping NormalCallback) -> UUID {
-        DefaultSocketLogger.Logger.log("Adding once handler for event: \(event)", type: SocketIOClient.logType)
+        DefaultSocketLogger.Logger.log("Adding once handler for event: \(event)", type: logType)
 
         let id = UUID()
 
