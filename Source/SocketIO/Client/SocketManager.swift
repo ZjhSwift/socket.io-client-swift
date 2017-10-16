@@ -22,9 +22,28 @@
 import Dispatch
 import Foundation
 
+// TODO Fix the types so that we aren't using concrete types
+
+///
+/// A manager for a socket.io connection.
+///
+/// A `SocketManagerSpec` is responsible for multiplexing multiple namespaces through a single `SocketEngineSpec`.
+///
+/// Example:
+///
+/// ```swift
+/// let manager = SocketManager(socketURL: URL(string:"http://localhost:8080/")!)
+/// let defaultNamespaceSocket = manager.defaultSocket!
+/// let swiftSocket = manager.socket(forNamespace: "/swift")
+/// // defaultNamespaceSocket and swiftSocket both share a single connection to the server
+/// ```
+///
 @objc
 public protocol SocketManagerSpec : class, SocketEngineClient {
     // MARK Properties
+
+    /// Returns the socket associated with the default namespace ("/").
+    var defaultSocket: SocketIOClient? { get }
 
     /// The engine for this manager.
     var engine: SocketEngineSpec? { get set }
@@ -32,6 +51,7 @@ public protocol SocketManagerSpec : class, SocketEngineClient {
     /// If `true` then every time `connect` is called, a new engine will be created.
     var forceNew: Bool { get set }
 
+    // TODO Per socket queues?
     /// The queue that all interaction with the client should occur on. This is the queue that event handlers are
     /// called on.
     var handleQueue: DispatchQueue { get set }
@@ -42,6 +62,9 @@ public protocol SocketManagerSpec : class, SocketEngineClient {
     /// The number of seconds to wait before attempting to reconnect.
     var reconnectWait: Int { get set }
 
+    /// The URL of the socket.io server.
+    var socketURL: URL { get }
+
     /// The status of this manager.
     var status: SocketManagerStatus { get }
 
@@ -50,6 +73,11 @@ public protocol SocketManagerSpec : class, SocketEngineClient {
     /// Connects the underlying transport.
     func connect()
 
+    /// Connects a socket through this manager's engine.
+    ///
+    /// - parameter socket: The socket who we should connect through this manager.
+    func connectSocket(_ socket: SocketIOClient)
+
     /// Called when the manager has disconnected from socket.io.
     ///
     /// - parameter reason: The reason for the disconnection.
@@ -57,6 +85,16 @@ public protocol SocketManagerSpec : class, SocketEngineClient {
 
     /// Disconnects the manager and all associated sockets.
     func disconnect()
+
+    /// Disconnects the given socket.
+    ///
+    /// - parameter socket: The socket to disconnect.
+    func disconnectSocket(_ socket: SocketIOClient)
+
+    /// Disconnects the socket associated with `forNamespace`.
+    ///
+    /// - parameter forNamespace: The namespace to disconnect from.
+    func disconnectSocket(forNamespace nsp: String)
 
     /// Tries to reconnect to the server.
     ///
@@ -70,16 +108,34 @@ public protocol SocketManagerSpec : class, SocketEngineClient {
     func socket(forNamespace nsp: String) -> SocketIOClient
 }
 
+///
+/// A manager for a socket.io connection.
+///
+/// A `SocketManager` is responsible for multiplexing multiple namespaces through a single `SocketEngineSpec`.
+///
+/// Example:
+///
+/// ```swift
+/// let manager = SocketManager(socketURL: URL(string:"http://localhost:8080/")!)
+/// let defaultNamespaceSocket = manager.defaultSocket!
+/// let swiftSocket = manager.socket(forNamespace: "/swift")
+/// // defaultNamespaceSocket and swiftSocket both share a single connection to the server
+/// ```
+///
 open class SocketManager : NSObject, SocketManagerSpec, SocketParsable, SocketDataBufferable {
     private static let logType = "SocketManager"
 
     // MARK Properties
 
+    /// The socket associated with the default namespace ("/").
+    public var defaultSocket: SocketIOClient? {
+        return nsps["/"]
+    }
+
     /// The URL of the socket.io server.
     ///
     /// If changed after calling `init`, `forceNew` must be set to `true`, or it will only connect to the url set in the
     /// init.
-    @objc
     public let socketURL: URL
 
     /// The configuration for this client.
@@ -126,7 +182,17 @@ open class SocketManager : NSObject, SocketManagerSpec, SocketParsable, SocketDa
     public var reconnectWait = 10
 
     /// The status of this manager.
-    public private(set) var status: SocketManagerStatus = .notConnected
+    public private(set) var status: SocketManagerStatus = .notConnected {
+        didSet {
+            switch status {
+            case .connected:
+                reconnecting = false
+                currentReconnectAttempt = 0
+            default:
+                break
+            }
+        }
+    }
 
     /// A list of packets that are waiting for binary data.
     ///
@@ -159,7 +225,7 @@ open class SocketManager : NSObject, SocketManagerSpec, SocketParsable, SocketDa
         super.init()
 
         setConfigs()
-        nsps["/"] = SocketIOClient(manager: self, nsp: "/", config: config)
+        nsps["/"] = SocketIOClient(manager: self, nsp: "/")
     }
 
     /// Not so type safe way to create a SocketIOClient, meant for Objective-C compatiblity.
@@ -190,7 +256,7 @@ open class SocketManager : NSObject, SocketManagerSpec, SocketParsable, SocketDa
         engine = SocketEngine(client: self, url: socketURL, config: config)
     }
 
-    /// Connects the underlying transport.
+    /// Connects the underlying transport and the default namespace socket.
     open func connect() {
         guard status == .notConnected || status == .disconnected else {
             // TODO logging
@@ -198,9 +264,26 @@ open class SocketManager : NSObject, SocketManagerSpec, SocketParsable, SocketDa
         }
 
         // TODO forceNew
-        addEngine()
+        if engine == nil {
+            addEngine()
+        }
 
         engine?.connect()
+    }
+
+    /// Connects a socket through this manager's engine.
+    ///
+    /// - parameter socket: The socket who we should connect through this manager.
+    open func connectSocket(_ socket: SocketIOClient) {
+        guard status == .connected else {
+            DefaultSocketLogger.Logger.log("Tried connecting socket when engine isn't open. Connecting",
+                                           type: SocketManager.logType)
+
+            connect()
+            return
+        }
+
+        engine?.send("0\(socket.nsp)", withData: [])
     }
 
     /// Called when the manager has disconnected from socket.io.
@@ -221,6 +304,37 @@ open class SocketManager : NSObject, SocketManagerSpec, SocketParsable, SocketDa
         engine?.disconnect(reason: "Disconnect")
     }
 
+    /// Disconnects the given socket.
+    ///
+    /// This will remove the socket for the manager's control, and make the socket instance useless and ready for
+    /// releasing.
+    ///
+    /// - parameter socket: The socket to disconnect.
+    open func disconnectSocket(_ socket: SocketIOClient) {
+        // Make sure we remove socket from nsps
+        nsps.removeValue(forKey: socket.nsp)
+
+        engine?.send("1\(socket.nsp)", withData: [])
+        socket.didDisconnect(reason: "Namespace leave")
+    }
+
+    /// Disconnects the socket associated with `forNamespace`.
+    ///
+    /// This will remove the socket for the manager's control, and make the socket instance useless and ready for
+    /// releasing.
+    ///
+    /// - parameter forNamespace: The namespace to disconnect from.
+    open func disconnectSocket(forNamespace nsp: String) {
+        guard let socket = nsps.removeValue(forKey: nsp) else {
+            DefaultSocketLogger.Logger.log("Could not find socket for \(nsp) to disconnect",
+                                           type: SocketManager.logType)
+
+            return
+        }
+
+        disconnectSocket(socket)
+    }
+
     /// Sends a packet to all sockets in `nsps`
     ///
     /// - parameter packet: The packet to emit.
@@ -236,6 +350,34 @@ open class SocketManager : NSObject, SocketManagerSpec, SocketParsable, SocketDa
     open func emitAll(clientEvent event: SocketClientEvent, data: [Any]) {
         forAll {socket in
             socket.handleClientEvent(event, data: data)
+        }
+    }
+
+    /// Sends an event to the server on all namespaces in this manager.
+    ///
+    /// - parameter event: The event to send.
+    /// - parameter items: The data to send with this event.
+    open func emitAll(_ event: String, _ items: SocketData...) {
+        guard let emitData = try? items.map({ try $0.socketRepresentation() }) else {
+            DefaultSocketLogger.Logger.error("Error creating socketRepresentation for emit: \(event), \(items)",
+                                             type: SocketManager.logType)
+
+            return
+        }
+
+        emitAll(event, withItems: emitData)
+    }
+
+    /// Sends an event to the server on all namespaces in this manager.
+    ///
+    /// Same as `emitAll(_:_:)`, but meant for Objective-C.
+    ///
+    /// - parameter event: The event to send.
+    /// - parameter withItems: The data to send with this event.
+    @objc
+    open func emitAll(_ event: String, withItems items: [Any]) {
+        forAll {socket in
+            socket.emit(event, with: items)
         }
     }
 
@@ -290,10 +432,11 @@ open class SocketManager : NSObject, SocketManagerSpec, SocketParsable, SocketDa
     private func _engineDidOpen(reason: String) {
         DefaultSocketLogger.Logger.log("Engine opened \(reason)", type: SocketManager.logType)
 
+        status = .connected
         nsps["/"]?.didConnect(toNamespace: "/")
 
-        for (nsp, socket) in nsps where nsp != "/" {
-            socket.joinNamespace()
+        for (nsp, socket) in nsps where nsp != "/" && socket.status == .connecting {
+            connectSocket(socket)
         }
     }
 
@@ -319,9 +462,9 @@ open class SocketManager : NSObject, SocketManagerSpec, SocketParsable, SocketDa
         emitAll(clientEvent: .ping, data: [])
     }
 
-    private func forAll(do: (SocketIOClient) -> ()) {
+    private func forAll(do: (SocketIOClient) throws -> ()) rethrows {
         for (_, socket) in nsps {
-            `do`(socket)
+            try `do`(socket)
         }
     }
 
@@ -422,7 +565,7 @@ open class SocketManager : NSObject, SocketManagerSpec, SocketParsable, SocketDa
             return socket
         }
 
-        let client = SocketIOClient(manager: self, nsp: nsp, config: config)
+        let client = SocketIOClient(manager: self, nsp: nsp)
 
         nsps[nsp] = client
 

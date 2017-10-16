@@ -39,30 +39,12 @@ open class SocketIOClient : NSObject, SocketIOClientSpec {
     @objc
     public var nsp = "/"
 
-    /// The configuration for this client.
-    ///
-    /// **This cannot be set after calling one of the connect methods**.
-    public var config: SocketIOClientConfiguration {
-        get {
-            return _config
-        }
-
-        set {
-            guard status == .notConnected else {
-                DefaultSocketLogger.Logger.error("Tried setting config after calling connect", type: logType)
-                return
-            }
-
-            _config = newValue
-
-            _config.insert(.path("/socket.io/"), replacing: false)
-        }
-    }
-
     /// The session id of this client.
     @objc
-    public var sid: String? {
-        return manager?.engine?.sid
+    public var sid: String {
+        guard let engine = manager?.engine else { return "" }
+
+        return nsp == "/" ? engine.sid : "\(nsp)#\(engine.sid)"
     }
 
     /// A handler that will be called on any event.
@@ -87,32 +69,20 @@ open class SocketIOClient : NSObject, SocketIOClientSpec {
 
     private(set) var currentAck = -1
 
-    private var _config: SocketIOClientConfiguration
     private lazy var logType = "SocketIOClient{\(nsp)}"
 
     // MARK: Initializers
 
     /// Type safe way to create a new SocketIOClient. `opts` can be omitted.
     ///
+    /// - parameter manager: The manager for this socket.
     /// - parameter socketURL: The url of the socket.io server.
-    /// - parameter config: The config for this socket.
-    public init(manager: SocketManagerSpec, nsp: String, config: SocketIOClientConfiguration = []) {
-        self._config = config
+    @objc
+    public init(manager: SocketManagerSpec, nsp: String) {
         self.manager = manager
         self.nsp = nsp
 
         super.init()
-    }
-
-    /// Not so type safe way to create a SocketIOClient, meant for Objective-C compatibility.
-    /// If using Swift it's recommended to use `init(socketURL: NSURL, options: Set<SocketIOClientOption>)`
-    ///
-    /// - parameter manager: The manager for this socket.io connection.
-    /// - parameter nsp: The namespace for this socket.
-    /// - parameter config: The config for this socket.
-    @objc
-    public convenience init(manager: SocketManagerSpec, nsp: String, config: NSDictionary?) {
-        self.init(manager: manager, nsp: nsp, config: config?.toSocketConfiguration() ?? [])
     }
 
     deinit {
@@ -147,7 +117,7 @@ open class SocketIOClient : NSObject, SocketIOClientSpec {
 
         status = .connecting
 
-        manager.connect()
+        manager.connectSocket(self)
 
         guard timeoutAfter != 0 else { return }
 
@@ -389,7 +359,9 @@ open class SocketIOClient : NSObject, SocketIOClientSpec {
     open func leaveNamespace() {
         guard nsp != "/" else { return }
 
-        manager?.engine?.send("1\(nsp)", withData: [])
+        status = .disconnected
+
+        manager?.disconnectSocket(self)
     }
 
     /// Joins `nsp`.

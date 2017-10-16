@@ -32,9 +32,6 @@ public protocol SocketIOClientSpec : class {
     /// A handler that will be called on any event.
     var anyHandler: ((SocketAnyEvent) -> ())? { get }
 
-    /// The configuration for this client.
-    var config: SocketIOClientConfiguration { get set }
-
     /// The array of handlers for this socket.
     var handlers: [SocketEventHandler] { get }
 
