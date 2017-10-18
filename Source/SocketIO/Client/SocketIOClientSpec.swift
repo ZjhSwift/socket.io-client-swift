@@ -44,7 +44,7 @@ public protocol SocketIOClientSpec : class {
     var nsp: String { get set }
 
     /// The status of this client.
-    var status: SocketIOClientStatus { get }
+    var status: SocketIOStatus { get }
 
     // MARK: Methods
 

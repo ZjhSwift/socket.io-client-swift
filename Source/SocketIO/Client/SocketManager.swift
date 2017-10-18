@@ -66,7 +66,7 @@ public protocol SocketManagerSpec : class, SocketEngineClient {
     var socketURL: URL { get }
 
     /// The status of this manager.
-    var status: SocketManagerStatus { get }
+    var status: SocketIOStatus { get }
 
     // MARK: Methods
 
@@ -182,7 +182,7 @@ open class SocketManager : NSObject, SocketManagerSpec, SocketParsable, SocketDa
     public var reconnectWait = 10
 
     /// The status of this manager.
-    public private(set) var status: SocketManagerStatus = .notConnected {
+    public private(set) var status: SocketIOStatus = .notConnected {
         didSet {
             switch status {
             case .connected:
@@ -571,20 +571,4 @@ open class SocketManager : NSObject, SocketManagerSpec, SocketParsable, SocketDa
 
         return client
     }
-}
-
-/// Represents the state of a manager.
-@objc
-public enum SocketManagerStatus : Int {
-    /// The manager is connected.
-    case connected
-
-    /// The manager is in the process of connecting.
-    case connecting
-
-    /// The manager is disconnected and will not attempt to reconnect.
-    case disconnected
-
-    /// The manager has just been created.
-    case notConnected
 }

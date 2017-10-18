@@ -59,7 +59,7 @@ open class SocketIOClient : NSObject, SocketIOClientSpec {
 
     /// The status of this client.
     @objc
-    public private(set) var status = SocketIOClientStatus.notConnected {
+    public private(set) var status = SocketIOStatus.notConnected {
         didSet {
             handleClientEvent(.statusChange, data: [status])
         }
@@ -507,7 +507,7 @@ open class SocketIOClient : NSObject, SocketIOClientSpec {
         status = .connected
     }
 
-    func setTestStatus(_ status: SocketIOClientStatus) {
+    func setTestStatus(_ status: SocketIOStatus) {
         self.status = status
     }
 

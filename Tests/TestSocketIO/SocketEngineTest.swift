@@ -10,17 +10,6 @@ import XCTest
 @testable import SocketIO
 
 class SocketEngineTest: XCTestCase {
-    var client: SocketIOClient!
-    var engine: SocketEngine!
-
-    override func setUp() {
-        super.setUp()
-        client = SocketIOClient(socketURL: URL(string: "http://localhost")!)
-        engine = SocketEngine(client: client, url: URL(string: "http://localhost")!, options: nil)
-
-        client.setTestable()
-    }
-
     func testBasicPollingMessage() {
         let expect = expectation(description: "Basic polling test")
         client.on("blankTest") {data, ack in
@@ -122,5 +111,19 @@ class SocketEngineTest: XCTestCase {
         engine.parseEngineMessage(b64String)
 
         waitForExpectations(timeout: 3, handler: nil)
+    }
+
+    var manager: SocketManager!
+    var client: SocketIOClient!
+    var engine: SocketEngine!
+
+    override func setUp() {
+        super.setUp()
+
+        manager = SocketManager(socketURL: URL(string: "http://localhost")!)
+        client = manager.defaultSocket
+        engine = SocketEngine(client: manager, url: URL(string: "http://localhost")!, options: nil)
+
+        client.setTestable()
     }
 }
