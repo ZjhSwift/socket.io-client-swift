@@ -268,6 +268,8 @@ open class SocketManager : NSObject, SocketManagerSpec, SocketParsable, SocketDa
             addEngine()
         }
 
+        status = .connecting
+
         engine?.connect()
     }
 
@@ -493,7 +495,7 @@ open class SocketManager : NSObject, SocketManagerSpec, SocketParsable, SocketDa
     /// - parameter data: The data the engine received.
     open func parseEngineBinaryData(_ data: Data) {
         handleQueue.async {
-            self.parseEngineBinaryData(data)
+            self._parseEngineBinaryData(data)
         }
     }
 

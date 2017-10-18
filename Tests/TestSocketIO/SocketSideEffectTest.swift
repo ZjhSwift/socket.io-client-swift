@@ -251,8 +251,8 @@ class SocketSideEffectTest: XCTestCase {
     func testConnectTimesOutIfNotConnected() {
         let expect = expectation(description: "The client should call the timeout function")
 
+        socket = manager.socket(forNamespace: "/someNamespace")
         socket.setTestStatus(.notConnected)
-        socket.nsp = "/someNamespace"
         manager.engine = TestEngine(client: manager, url: manager.socketURL, options: nil)
 
         socket.connect(timeoutAfter: 0.5, withHandler: {
@@ -405,6 +405,7 @@ class SocketSideEffectTest: XCTestCase {
     }
 
     func testSettingConfigAfterInitWhenConnectedIgnoresChanges() {
+        manager.connect()
         manager.config = [.log(true)]
 
         XCTAssertFalse(DefaultSocketLogger.Logger.log, "It should set logging to false after creation")
