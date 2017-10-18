@@ -142,12 +142,8 @@ public struct SocketPacket : CustomStringConvertible {
             if dict["_placeholder"] as? Bool ?? false {
                 return binary[dict["num"] as! Int]
             } else {
-                return dict.reduce(JSON(), {cur, keyValue in
-                    var cur = cur
-
+                return dict.reduce(into: JSON(), {cur, keyValue in
                     cur[keyValue.0] = _fillInPlaceholders(keyValue.1)
-
-                    return cur
                 })
             }
         case let arr as [Any]:
